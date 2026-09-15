@@ -1,0 +1,38 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+  mongo:
+    image: mongo:7
+    ports: ["27017:27017"]
+    volumes: [mongo_data:/data/db]
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    ports: ["5000:5000"]
+    environment:
+      NODE_ENV: development
+      MONGO_URI: mongodb://mongo:27017/codevortex_dev
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: dev-access-secret-change-me-32-chars-min
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-me-32-chars-min
+      ALLOWED_ORIGIN: http://localhost:5173
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on: [mongo, redis]
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports: ["5173:5173"]
+    environment:
+      VITE_API_URL: http://localhost:5000
+      VITE_SOCKET_URL: http://localhost:5000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+volumes:
+  mongo_data:

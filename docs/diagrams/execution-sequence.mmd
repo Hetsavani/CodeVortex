@@ -1,0 +1,124 @@
+%% CodeVortex — Master Execution Sequence (Mermaid)
+%% Paste into https://mermaid.live — vertical lifelines = services, horizontal arrows = execution steps
+%% This is the single master diagram; see docs/engineering/execution-flow.md for per-scenario breakdowns
+
+sequenceDiagram
+    participant Browser as Browser<br/>(Monaco/xterm/Redux)
+    participant SIO as Socket.IO
+    participant API as Express API
+    participant Redis
+    participant Docker as Docker Engine
+    participant Container as Ephemeral Container<br/>(--network=none, 128m, pids 50)
+    participant Mongo as MongoDB
+    participant Gemini as Gemini 2.5 Flash
+
+    Note over Browser,Gemini: 0) Bootstrap & Auth
+    Browser->>API: POST /api/auth/login {email, password}
+    API->>Mongo: findOne users {email}
+    Mongo-->>API: user + hash
+    API-->>Browser: 200 {JWT 7d}
+    Browser->>SIO: io(SOCKET_URL) WS handshake
+    SIO-->>Browser: 101 Switching Protocols
+
+    Note over Browser,Mongo: 1) Open & Edit File
+    Browser->>API: GET /api/files/:path/content (Bearer JWT)
+    API->>Mongo: find file {projectId, path}
+    Mongo-->>Browser: {content}
+    Browser->>Browser: Monaco onChange → Redux updateFileContent + dirty ●
+    Browser->>API: PUT /api/files/:path/content {content} (autosave 2s / Ctrl+S)
+    API->>Mongo: updateOne {content, size}
+    Mongo-->>Browser: 200 {success}
+
+    Note over Browser,Container: 2) Execute — Happy Path (streamed, isolated)
+    Browser->>SIO: exec:start {code, language, stdin?, projectId, idempotencyKey}
+    SIO->>API: auth + validate (allowlist, <100KB)
+    API->>Redis: INCR rate:exec:{userId}:hour (30/hr)
+    API->>Redis: SET process:{id} {status:queued} TTL 30m
+    SIO-->>Browser: exec:started {processId}
+    Browser->>SIO: join room process:{id}
+    API->>Docker: createContainer {Image: code-runner:{lang}, NetworkMode:none, Memory:128m, Cpus:0.5, PidsLimit:50, ReadonlyRootfs:true, Tmpfs:/tmp 10m, User:1000, CapDrop:ALL}
+    Docker->>Container: start + attach stdout/stderr
+    Container-->>Docker: stdout chunk "Hello\n"
+    Docker-->>API: demux stream
+    API->>Redis: RPUSH process:buffer:{id} chunk + LTRIM 0 999
+    API->>SIO: exec:output {processId, chunk, stream:stdout}
+    SIO-->>Browser: render chunk live
+    Container-->>Docker: exit 0
+    Docker-->>API: wait → StatusCode 0
+    API->>Mongo: insert execution_logs {exitCode:0, durationMs}
+    API->>Redis: SET process:{id} {status:done, exitCode:0}
+    API->>SIO: exec:done {processId, exitCode:0, duration}
+    SIO-->>Browser: green success
+    API->>Docker: rm container (--rm)
+
+    Note over Browser,Container: 3) Compiled Language (Java/C/C++) — compile then run inside same container
+    Browser->>SIO: exec:start {language:java, code:"public class Main..."}
+    SIO->>Docker: sh -c "cat > /tmp/Main.java <<'EOF' ... && javac /tmp/Main.java && java -cp /tmp Main"
+    alt javac error
+        Container-->>SIO: exec:output stderr "cannot find symbol"
+        Container-->>SIO: exec:done exit 1 (no run)
+    else javac ok
+        Container-->>SIO: exec:output stdout (run output)
+        Container-->>SIO: exec:done exit 0
+    end
+
+    Note over Browser,Container: 4) Timeout & Kill
+    Browser->>SIO: exec:start {code:"while True: pass"}
+    SIO->>Docker: run (cpus 0.5 caps spin)
+    API->>API: setTimeout 15s
+    API->>Docker: kill SIGKILL
+    API->>SIO: exec:timeout {processId}
+    SIO-->>Browser: toast Timed out 15s
+    Note over Browser,Container: User kill: Browser->>SIO: exec:kill {processId} → Docker kill → exec:done killed
+
+    Note over Browser,Container: 5) Mid-execution stdin (input()/scanf)
+    Browser->>SIO: exec:start {code: name=input('Name#58; ') print(name)}
+    Container-->>SIO: exec:output 'Name#58; ' blocks on read
+    SIO-->>Browser: show inline stdin input
+    Browser->>SIO: process:stdin {processId, data:"Alice\n"}
+    SIO->>Container: stdin.write "Alice\n"
+    Container-->>SIO: exec:output "Alice\n"
+    Container-->>SIO: exec:done exit 0
+
+    Note over Browser,Container: 6) Terminal PTY (xterm.js + node-pty)
+    Browser->>SIO: term:start {projectId, cols:80, rows:24}
+    SIO->>Docker: run -it + volume workspace-{userId}-{projectId}:/workspace
+    SIO->>SIO: pty.spawn docker exec -it {id} /bin/bash
+    SIO-->>Browser: term:ready {sessionId}
+    Browser->>SIO: term:input {sessionId, data:"ls\r"}
+    SIO->>Container: pty.write → bash executes
+    Container-->>SIO: term:output ANSI "file.py\r\n$ "
+    SIO-->>Browser: xterm write (colors, cursor)
+    Browser->>SIO: term:resize {cols:120, rows:30}
+    SIO->>Container: pty.resize → SIGWINCH
+    Browser->>SIO: term:stop {sessionId}
+    SIO->>Docker: kill container
+    SIO->>Redis: DEL terminal:{sessionId}
+
+    Note over Browser,Gemini: 7) Image → Code (OCR)
+    Browser->>API: POST /api/ocr/extract-code {image b64, mimeType}
+    API->>Redis: INCR rate:ocr:{userId}:day (10/day)
+    API->>Gemini: generateContent vision {prompt JSON {language,code}, inlineData}
+    Gemini-->>API: {language, code}
+    API-->>Browser: 200 {language, code} → popup preview → Run
+
+    Note over Browser,Gemini: 8) AI Chat (SSE streaming)
+    Browser->>API: POST /api/ai/chat SSE {message, activeFile 0..8000, stderr 0..2000, history 10}
+    API->>Redis: rate ai_chat 100/day
+    API->>Gemini: generateContentStream(context)
+    loop chunks
+        Gemini-->>API: chunk.text()
+        API-->>Browser: SSE data: {"text": chunk}
+    end
+    API-->>Browser: SSE data: [DONE]
+
+    Note over Browser,Redis: 9) Reconnect & Crash Recovery
+    Browser->>SIO: exec:reconnect {processId}
+    SIO->>Redis: GET process:{processId} + LRANGE buffer
+    SIO-->>Browser: replay buffered chunks
+    alt still running
+        SIO-->>Browser: rejoin room → live resume
+    else done/timeout
+        SIO-->>Browser: exec:done {exitCode}
+    end
+    Note over API,Docker: On API restart: SCAN process:* → kill orphans older than 2×timeout → mark crashed
