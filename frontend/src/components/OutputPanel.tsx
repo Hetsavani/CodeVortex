@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useSelector } from 'react-redux';
 import { RootState } from '@/store';
 import { getSocket } from '@/lib/socket';
+import { Button } from '@/components/ui/button';
+import { useTheme } from '@/components/ThemeProvider';
 
 export default function OutputPanel(): JSX.Element {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
   const [output, setOutput] = useState('');
   const [running, setRunning] = useState(false);
   const [processId, setProcessId] = useState<string | null>(null);
@@ -43,26 +47,23 @@ export default function OutputPanel(): JSX.Element {
 
   const kill = (): void => {
     if (!processId || !accessToken) return;
-    const socket = getSocket(accessToken);
-    socket.emit('exec:kill', { processId });
+    getSocket(accessToken).emit('exec:kill', { processId });
   };
 
-  // cleanup on unmount
-  useEffect(() => () => setRunning(false), []);
-
   return (
-    <div className="flex h-full flex-col bg-[#1e1e1e] text-gray-200">
-      <div className="flex items-center gap-2 border-b border-gray-700 p-2">
-        <button onClick={run} disabled={running} className="rounded bg-green-600 px-3 py-1 text-sm text-white disabled:opacity-50">
-          {running ? 'Running...' : 'Run (Ctrl+Enter)'}
-        </button>
+    <div className={`flex h-full flex-col ${isDark ? 'bg-[#1e1e1e] text-gray-200' : 'bg-white text-gray-900'}`}>
+      <div className={`flex items-center gap-2 border-b px-3 py-2 ${isDark ? 'border-zinc-700' : 'border-gray-200 bg-gray-50'}`}>
+        <Button size="sm" onClick={run} disabled={running || !activeTab} className="h-7">
+          {running ? 'Running…' : 'Run'}
+        </Button>
         {running && (
-          <button onClick={kill} className="rounded bg-red-600 px-3 py-1 text-sm text-white">
-            Kill
-          </button>
+          <Button size="sm" variant="destructive" onClick={kill} className="h-7">
+            Stop
+          </Button>
         )}
+        <span className="ml-auto text-xs text-muted-foreground">{activeTab ? activeTab.language : 'no file'}</span>
       </div>
-      <pre className="flex-1 overflow-auto p-3 text-sm whitespace-pre-wrap">{output || 'No output yet. Run a file to see results.'}</pre>
+      <pre className="flex-1 overflow-auto p-3 font-mono text-sm whitespace-pre-wrap">{output || 'No output yet. Press Run or Ctrl+Enter.'}</pre>
     </div>
   );
 }

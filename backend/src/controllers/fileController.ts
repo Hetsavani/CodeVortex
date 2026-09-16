@@ -7,6 +7,30 @@ import { AppError } from '../utils/AppError.js';
 
 const isValidPath = (p: string): boolean => /^[a-zA-Z0-9_\-./]+$/.test(p) && !p.includes('..');
 
+const getLanguageFromPath = (path: string): string => {
+  const ext = path.split('.').pop()?.toLowerCase();
+  const map: Record<string, string> = {
+    py: 'python',
+    js: 'javascript',
+    jsx: 'javascript',
+    ts: 'typescript',
+    tsx: 'typescript',
+    java: 'java',
+    cpp: 'cpp',
+    c: 'c',
+    cc: 'cpp',
+    cxx: 'cpp',
+    go: 'go',
+    rs: 'rust',
+    html: 'html',
+    css: 'css',
+    json: 'json',
+    sh: 'shell',
+    md: 'markdown',
+  };
+  return map[ext || ''] || 'plaintext';
+};
+
 const createSchema = z.object({
   path: z.string().min(1).max(500),
   content: z.string().max(512 * 1024).optional().default(''),
@@ -39,12 +63,14 @@ export const createFile = async (req: AuthRequest, res: Response, next: NextFunc
     if (!isValidPath(path)) throw new AppError('Invalid path', 400);
     const name = path.split('/').pop() || path;
     const size = Buffer.byteLength(content || '', 'utf8');
+    const inferred = isFolder ? 'plaintext' : getLanguageFromPath(path);
+    const finalLanguage = !language || language === 'plaintext' ? inferred : language;
     const file = await File.create({
       projectId,
       userId: req.user!.id,
       path,
       name,
-      language: language || 'plaintext',
+      language: finalLanguage,
       content: isFolder ? '' : content,
       size,
       isFolder,
