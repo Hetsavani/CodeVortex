@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { RootState } from '@/store';
 import { logout } from '@/store/authSlice';
+import { clearTabs } from '@/store/editorSlice';
 import FileExplorer from '@/components/FileExplorer';
 import EditorPanel from '@/components/EditorPanel';
 import OutputPanel from '@/components/OutputPanel';
@@ -11,10 +12,42 @@ import AIChatPanel from '@/components/AIChatPanel';
 import Logo from '@/components/landing/Logo';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, User, ChevronDown, Sun, Moon } from 'lucide-react';
+import { LogOut, User, ChevronDown, Sun, Moon, Sparkles } from 'lucide-react';
 import { useTheme } from '@/components/ThemeProvider';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+function stringToHsl(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 70%, 50%)`;
+}
+
+function getContrastColor(hsl: string): string {
+  const m = hsl.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+  if (!m) return '#ffffff';
+  const h = parseInt(m[1]) / 360, s = parseInt(m[2]) / 100, l = parseInt(m[3]) / 100;
+  let r: number, g: number, b: number;
+  if (s === 0) r = g = b = l;
+  else {
+    const hue2rgb = (p: number, q: number, t: number): number => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+  const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+  return luminance > 0.5 ? '#000000' : '#ffffff';
+}
 
 export default function IDE(): JSX.Element {
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -24,6 +57,8 @@ export default function IDE(): JSX.Element {
   const [profileOpen, setProfileOpen] = useState(false);
   const { accessToken, user } = useSelector((s: RootState) => s.auth);
   const { theme, toggle } = useTheme();
+  const avatarBg = useMemo(() => stringToHsl(user?.username || user?.email || 'U'), [user?.username, user?.email]);
+  const avatarFg = useMemo(() => getContrastColor(avatarBg), [avatarBg]);
   const dispatch = useDispatch();
   const nav = useNavigate();
 
@@ -66,15 +101,15 @@ export default function IDE(): JSX.Element {
           </Button>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setShowAI(!showAI)}>
-            {showAI ? 'Hide AI' : 'Show AI'}
+          <Button variant="ghost" size="icon" onClick={() => setShowAI(!showAI)} aria-label={showAI ? 'Hide AI' : 'Show AI'} title={showAI ? 'Hide AI assistant' : 'Show AI assistant'} className={showAI ? 'text-cyan-500' : ''}>
+            <Sparkles className="h-4 w-4" />
           </Button>
           <div className="relative">
             <button
               onClick={() => setProfileOpen((v) => !v)}
               className="flex items-center gap-2 rounded-full border px-2 py-1 text-sm hover:bg-muted transition-colors"
             >
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-cyan-500 text-white text-xs font-semibold">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold" style={{ backgroundColor: avatarBg, color: avatarFg }}>
                 {(user?.username?.[0] || user?.email?.[0] || 'U').toUpperCase()}
               </span>
               <span className="hidden sm:block max-w-[120px] truncate text-xs">{user?.username || user?.email || 'Profile'}</span>
@@ -109,6 +144,7 @@ export default function IDE(): JSX.Element {
                       onClick={async () => {
                         setProfileOpen(false);
                         await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+                        dispatch(clearTabs());
                         dispatch(logout());
                         nav('/login');
                       }}

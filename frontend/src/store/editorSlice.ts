@@ -37,8 +37,12 @@ const slice = createSlice({
       const tab = state.tabs.find((t) => t.id === action.payload);
       if (tab) tab.isDirty = false;
     },
+    clearTabs: (state) => {
+      state.tabs = [];
+      state.activeTabId = null;
+    },
   },
 });
 
-export const { openTab, closeTab, setActiveTab, updateTabContent, markSaved } = slice.actions;
+export const { openTab, closeTab, setActiveTab, updateTabContent, markSaved, clearTabs } = slice.actions;
 export default slice.reducer;

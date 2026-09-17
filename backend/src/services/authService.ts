@@ -11,6 +11,17 @@ import type { AccessPayload, RefreshPayload } from '../types/auth.js';
 const ACCESS_EXP = env.ACCESS_TOKEN_EXPIRY;
 const REFRESH_EXP = env.REFRESH_TOKEN_EXPIRY;
 
+function parseToMs(exp: string): number {
+  const m = exp.match(/^(\d+)([smhd])$/);
+  if (!m) return 30 * 24 * 60 * 60 * 1000;
+  const n = parseInt(m[1], 10);
+  const unit = m[2] as 's' | 'm' | 'h' | 'd';
+  const mult = { s: 1000, m: 60 * 1000, h: 60 * 60 * 1000, d: 24 * 60 * 60 * 1000 }[unit]!;
+  return n * mult;
+}
+const REFRESH_MS = parseToMs(REFRESH_EXP);
+const REFRESH_SEC = Math.floor(REFRESH_MS / 1000);
+
 function signAccess(userId: string, email: string): { token: string; jti: string } {
   const jti = generateJti();
   const token = jwt.sign({ userId, email, jti } as Omit<AccessPayload, 'iat' | 'exp'>, env.JWT_ACCESS_SECRET, {
@@ -41,11 +52,11 @@ export const register = async (email: string, password: string, username: string
     userId: user._id,
     jti,
     tokenHash: sha256(refreshToken),
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    expiresAt: new Date(Date.now() + REFRESH_MS),
     ip,
     userAgent,
   });
-  await redis.set(`refresh:${jti}`, '1', 'EX', 7 * 86400);
+  await redis.set(`refresh:${jti}`, '1', 'EX', REFRESH_SEC);
 
   return { user, accessToken, refreshToken };
 };
@@ -64,11 +75,11 @@ export const login = async (email: string, password: string, ip?: string, userAg
     userId: user._id,
     jti,
     tokenHash: sha256(refreshToken),
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    expiresAt: new Date(Date.now() + REFRESH_MS),
     ip,
     userAgent,
   });
-  await redis.set(`refresh:${jti}`, '1', 'EX', 7 * 86400);
+  await redis.set(`refresh:${jti}`, '1', 'EX', REFRESH_SEC);
 
   return { user, accessToken, refreshToken };
 };
@@ -115,13 +126,13 @@ export const refresh = async (rawToken: string, ip?: string, userAgent?: string)
     userId: user._id,
     jti: newJti,
     tokenHash: sha256(newRefreshToken),
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    expiresAt: new Date(Date.now() + REFRESH_MS),
     ip,
     userAgent,
   });
-  await redis.set(`refresh:${newJti}`, '1', 'EX', 7 * 86400);
+  await redis.set(`refresh:${newJti}`, '1', 'EX', REFRESH_SEC);
 
-  return { accessToken: newAccessToken, refreshToken: newRefreshToken };
+  return { accessToken: newAccessToken, refreshToken: newRefreshToken, user: { id: user._id, email: user.email, username: user.username } };
 };
 
 export const logout = async (rawToken: string): Promise<void> => {

@@ -15,13 +15,22 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+function parseToMs(exp: string): number {
+  const m = exp.match(/^(\d+)([smhd])$/);
+  if (!m) return 30 * 24 * 60 * 60 * 1000;
+  const n = parseInt(m[1], 10);
+  const unit = m[2] as 's' | 'm' | 'h' | 'd';
+  const mult = { s: 1000, m: 60 * 1000, h: 60 * 60 * 1000, d: 24 * 60 * 60 * 1000 }[unit]!;
+  return n * mult;
+}
+
 function setRefreshCookie(res: Response, token: string): void {
   res.cookie('refreshToken', token, {
     httpOnly: true,
     secure: env.NODE_ENV === 'production',
     sameSite: 'strict',
     path: '/api/auth/refresh',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    maxAge: parseToMs(env.REFRESH_TOKEN_EXPIRY),
   });
 }
 
@@ -72,9 +81,21 @@ export const refresh = async (req: Request, res: Response, next: NextFunction): 
       res.status(403).json({ error: 'Origin not allowed' });
       return;
     }
-    const { accessToken, refreshToken } = await authService.refresh(raw, req.ip, req.headers['user-agent']);
+    const { accessToken, refreshToken, user } = await authService.refresh(raw, req.ip, req.headers['user-agent']) as any;
+    // authService.refresh currently returns {accessToken, refreshToken}, fetch user for response
+    let userData = user;
+    if (!userData) {
+      // fallback: decode accessToken to get userId then fetch
+      try {
+        const jwt = await import('jsonwebtoken');
+        const payload = jwt.default.verify(accessToken, process.env.JWT_ACCESS_SECRET!) as any;
+        const { User } = await import('../models/User.js');
+        const u = await User.findById(payload.userId);
+        if (u) userData = { id: u._id, email: u.email, username: u.username };
+      } catch {}
+    }
     setRefreshCookie(res, refreshToken);
-    res.json({ accessToken });
+    res.json({ accessToken, user: userData });
   } catch (err) {
     res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
     next(err);

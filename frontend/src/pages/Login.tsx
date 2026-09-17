@@ -4,6 +4,7 @@ import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import { useNavigate, Link } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import { setCredentials } from '@/store/authSlice';
+import { clearTabs } from '@/store/editorSlice';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -53,6 +54,8 @@ export default function Login(): JSX.Element {
       });
       const data = await res.json();
       if (res.ok && data.accessToken) {
+        // clear previous user's tabs so new account doesn't see stale files
+        dispatch(clearTabs());
         dispatch(setCredentials({ accessToken: data.accessToken, user: data.user }));
         nav('/ide');
       } else setError(data.error || data.message || 'Auth failed');

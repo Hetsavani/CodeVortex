@@ -4,6 +4,12 @@ import storage from 'redux-persist/lib/storage';
 import authReducer from './authSlice';
 import editorReducer from './editorSlice';
 
+const authPersistConfig = {
+  key: 'auth',
+  storage,
+  whitelist: ['accessToken', 'user'],
+};
+
 const editorPersistConfig = {
   key: 'editor',
   storage,
@@ -11,7 +17,7 @@ const editorPersistConfig = {
 };
 
 const rootReducer = combineReducers({
-  auth: authReducer,
+  auth: persistReducer(authPersistConfig, authReducer),
   editor: persistReducer(editorPersistConfig, editorReducer),
 });
 
